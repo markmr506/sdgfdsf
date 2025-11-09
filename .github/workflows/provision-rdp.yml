@@ -10,67 +10,53 @@ permissions:
 jobs:
   setup-rdp:
     runs-on: windows-latest
-    timeout-minutes: 350  # ~6 hours runtime limit
+    timeout-minutes: 350
 
     steps:
-    - name: Step 1 - Display info
-      run: |
-        echo "==== Starting Free RDP Session ===="
-        echo "This uses GitHub's Windows runner."
-        echo "RAM: ~7GB | Storage: ~14GB | Duration: 6 Hours"
+      - name: Step 1 - Display info
+        run: |
+          echo "==== Starting Free RDP Session ===="
+          echo "This uses GitHub's Windows runner."
+          echo "RAM: ~7GB | Storage: ~14GB | Duration: 6 Hours"
 
-    - name: Step 2 - Create RDP User and Enable RDP
-      run: |
-        $user = "ghrdp"
-        $pw = "${{ secrets.RDP_PASSWORD }}"
-        net user $user $pw /add
-        net localgroup administrators $user /add
-        reg add "HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f
-        powershell -Command "Enable-NetFirewallRule -DisplayGroup 'Remote Desktop'"
-        echo "✅ RDP Enabled"
-        echo "Username: $user"
-        echo "Password: (your secret RDP_PASSWORD)"
-        echo "Login valid while workflow runs (~6 hours)"
+      - name: Step 2 - Create RDP User and Enable RDP
+        run: |
+          $user = "ghrdp"
+          $pw = "${{ secrets.RDP_PASSWORD }}"
+          net user $user $pw /add
+          net localgroup administrators $user /add
+          reg add "HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f
+          powershell -Command "Enable-NetFirewallRule -DisplayGroup 'Remote Desktop'"
+          echo "✅ RDP Enabled"
 
-    - name: Step 3 - Install Optional Tools
-      run: |
-        choco feature enable -n allowGlobalConfirmation
-        choco install -y googlechrome 7zip notepadplusplus
-        echo "✅ Chrome and Notepad++ Installed"
+      - name: Step 3 - Install Optional Tools
+        run: |
+          choco feature enable -n allowGlobalConfirmation
+          choco install -y googlechrome 7zip notepadplusplus
+          echo "✅ Chrome and Notepad++ Installed"
 
-    - name: Step 4 - Network Info
-      run: |
-        echo "🔍 Checking Network:"
-        ipconfig
+      - name: Step 4 - Network Info
+        run: ipconfig
 
-    - name: Step 5 - Keep Alive Loop
-      run: |
-        echo "⏳ Keeping RDP Alive for ~5 Hours 50 Minutes..."
-        timeout /t 21000
+      - name: Step 5 - Keep Alive
+        run: timeout /t 21000
 
-    - name: Step 6 - Auto Restart (Optional)
-      if: always()
-      env:
-        GH_PAT: ${{ secrets.GH_PAT }}
-        OWNER: ${{ secrets.REPO_OWNER }}
-        REPO: ${{ secrets.REPO_NAME }}
-        WORKFLOW: ${{ secrets.WORKFLOW_FILE }}
-      run: |
-        echo "🔁 Restarting Workflow (Auto Mode)..."
-        if ("${{ secrets.GH_PAT }}" -ne "") {
-          $uri = "https://api.github.com/repos/$env:OWNER/$env:REPO/actions/workflows/$env:WORKFLOW/dispatches"
-          $body = @{ ref = "main" } | ConvertTo-Json
-          $hdr = @{ Authorization = "token $env:GH_PAT"; "User-Agent" = "gh-actions-self-trigger" }
-          try {
+      - name: Step 6 - Auto Restart (optional)
+        if: always()
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+          OWNER: ${{ secrets.REPO_OWNER }}
+          REPO: ${{ secrets.REPO_NAME }}
+          WORKFLOW: ${{ secrets.WORKFLOW_FILE }}
+        run: |
+          if ("${{ secrets.GH_PAT }}" -ne "") {
+            $uri = "https://api.github.com/repos/$env:OWNER/$env:REPO/actions/workflows/$env:WORKFLOW/dispatches"
+            $body = @{ ref = "main" } | ConvertTo-Json
+            $hdr = @{ Authorization = "token $env:GH_PAT"; "User-Agent" = "gh-actions-self-trigger" }
             Invoke-RestMethod -Uri $uri -Method Post -Headers $hdr -Body $body -ContentType "application/json"
-            Write-Output "✅ Workflow triggered again successfully!"
-          } catch {
-            Write-Output "⚠️ Could not re-trigger workflow. Check GH_PAT permissions."
+          } else {
+            Write-Output "No GH_PAT provided; skipping auto-restart."
           }
-        } else {
-          Write-Output "⚠️ GH_PAT not set. Skipping auto-restart."
-        }
 
-    - name: Step 7 - Finish
-      run: |
-        echo "🛑 Session ended. You can manually re-run the workflow anytime."
+      - name: Step 7 - Finish
+        run: echo "Workflow complete."
