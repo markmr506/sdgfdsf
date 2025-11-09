@@ -7,11 +7,10 @@ permissions:
   contents: read
   workflows: write
 
-
 jobs:
   setup-rdp:
     runs-on: windows-latest
-    timeout-minutes: 350  # প্রায় ৫ ঘণ্টা ৫০ মিনিট
+    timeout-minutes: 350  # ~6 hours runtime limit
 
     steps:
     - name: Step 1 - Display info
