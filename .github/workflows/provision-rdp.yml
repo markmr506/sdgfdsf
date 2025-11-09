@@ -1,0 +1,81 @@
+name: Provision GitHub RDP (auto-restart)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  workflows: write   # to allow triggering other workflows (via GITHUB_TOKEN or PAT)
+
+jobs:
+  setup-rdp:
+    runs-on: windows-latest
+    timeout-minutes: 350   # safety > 6 hours (but runner will be terminated by GitHub at ~6h)
+
+    steps:
+    - name: Print header
+      run: |
+        echo "### GitHub RDP setup started ###"
+        echo "NOTE: This runner has limited RAM (~7GB) and ephemeral storage (~14GB)."
+
+    - name: Create RDP user and set password
+      run: |
+        $user = "ghrdp"
+        $pw = "${{ secrets.RDP_PASSWORD }}"
+        # Create user if not exists
+        net user $user $pw /add || echo "user creation returned non-zero"
+        net localgroup administrators $user /add || echo "add to admins returned non-zero"
+        # Enable RDP in registry & firewall
+        reg add "HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f
+        powershell -Command "Enable-NetFirewallRule -DisplayGroup 'Remote Desktop'"
+
+        echo "RDP user: $user"
+        echo "Password is the secret RDP_PASSWORD"
+
+    - name: Optionally install packages (Chrome, 7zip, etc)
+      run: |
+        choco feature enable -n allowGlobalConfirmation
+        choco install -y googlechrome 7zip
+
+    - name: Show network info (may be internal)
+      run: |
+        echo "Network adapters and addresses:"
+        ipconfig /all
+
+    - name: Keep alive loop (run until ~5h50m then trigger restart)
+      env:
+        OWNER: ${{ secrets.REPO_OWNER }}
+        REPO: ${{ secrets.REPO_NAME }}
+        WORKFLOW: ${{ secrets.WORKFLOW_FILE }}
+        GH_PAT: ${{ secrets.GH_PAT }}
+      run: |
+        echo "Runner will attempt to keep alive by running for ~5h50m, then trigger the workflow again."
+
+        # Total wait seconds before triggering self (5 hours 50 minutes)
+        $waitSeconds = 5 * 3600 + 50 * 60   # 5h50m = 21000 sec
+        # We'll loop in 1-minute chunks and print heartbeat
+        $chunks = [int]([math]::Ceiling($waitSeconds / 60))
+        for ($i=0; $i -lt $chunks; $i++) {
+          Write-Output ("Heartbeat: {0}/{1} minutes" -f ($i+1), $chunks)
+          Start-Sleep -Seconds 60
+        }
+
+        Write-Output "Time to trigger the workflow again (self-restart)."
+
+        # Use GitHub REST API to dispatch workflow
+        if ("${{ secrets.GH_PAT }}" -ne "") {
+          Write-Output "Triggering workflow using GH_PAT..."
+          $uri = "https://api.github.com/repos/$env:OWNER/$env:REPO/actions/workflows/$env:WORKFLOW/dispatches"
+          $body = @{ ref = "main" } | ConvertTo-Json
+          $hdr = @{ Authorization = "token $env:GH_PAT"; "User-Agent" = "gh-actions-self-trigger" }
+          Invoke-RestMethod -Uri $uri -Method Post -Headers $hdr -Body $body -ContentType "application/json"
+          Write-Output "Dispatch request sent."
+        } else {
+          Write-Output "GH_PAT not provided; cannot trigger self via API. Consider using GITHUB_TOKEN or manually re-run."
+        }
+
+        Write-Output "Exiting job; runner will terminate soon or after max duration."
+
+    - name: Final note
+      run: |
+        echo "If you need persistent files, upload to an external storage (rclone / cloud) because runner is ephemeral."
